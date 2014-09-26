@@ -93,21 +93,32 @@
             (swap! last-exception (constantly t))
             (print (.getMessage t))))))))
 
-(defn message-handler
-  [{nickname :room-nickname :as config}]
+(defn dispatches
+  [config room]
   (let [safe-eval (make-safe-eval config)]
-    (fn [{:keys [body from]}]
-      (when (and (not= nickname
-                       (string/replace (or from "") #"^[^/]*/" ""))
-                 (.startsWith body ","))
+    [[#",.*"
+      (fn [body from]
         (let [output (StringWriter.)]
           (safe-eval (safe-read (.substring body 1)) output)
-          (.toString output))))))
+          (.toString output)))] ]))
+
+(defn message-handler
+  [{nickname :room-nickname :as config} room]
+  (let [the-dispatches (dispatches config room)]
+    (fn [{:keys [body from]}]
+      (when (not= nickname
+                  (string/replace (or from "") #"^[^/]*/" ""))
+        (reduce (fn [_ [re func]]
+                  (when (re-matches re body)
+                    (if-let [resp (func body from)]
+                      (reduced resp))))
+                nil
+                the-dispatches)))))
 
 (defn -main
   []
   (let [{:keys [username password rooms room-nickname] :as config} (safe-read (slurp (io/resource "config.clj")))
         conn (connect username password "bot")]
     (doseq [room rooms]
-      (join conn room room-nickname (message-handler config)))
+      (join conn room room-nickname (message-handler config room)))
     @(promise)))
